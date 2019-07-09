@@ -3,8 +3,9 @@
 # A basic linear regression in STAN
 #   -----------------------------------------------------------------------
 
-
-# following: https://ourcodingclub.github.io/2018/04/17/stan-intro.html
+# following: 
+# STAN users guide: https://mc-stan.org/docs/2_19/stan-users-guide/linear-regression.html
+# https://ourcodingclub.github.io/2018/04/17/stan-intro.html
 
 
 # initialization ----------------------------------------------------------
@@ -19,29 +20,30 @@ library(dplyr)
 write("// Stan model for simple linear regression
 
 data {
- int < lower = 1 > N; // sample size
- vector[N] x; // predictor
+ int < lower = 0 > N; // sample size
+ int < lower = 0 > K; // number of predictors
+ matrix[N, K] x; // predictor matrix
  vector[N] y; // response
+ int < lower = 0 > N_new; // predicted sample size
+ matrix[N, K] x_new; // prediction matrix
 }
 
 parameters {
  real a; // intercept
- real b; // slope
- real < lower = 0 > sigma; // error SD
+ vector[K] b; // predictor coefficients
+ real < lower = 0 > sigma; // error (scaled)
 }
 
 model {
  a ~ normal(0,1e6);
- b ~ normal(0,1e6);
- y ~ normal(a + b*x, sigma);
+ b[K] ~ normal(0,1e6);
+ y ~ normal(a + x*b, sigma);
 }
 
 generated quantities {
- real y_rep[N];
- 
- for(n in 1:N){
-   y_rep[n] = normal_rng(a + b*x[n], sigma);
- }
+  vector[N_new] y_new;
+  for (n in 1:N_new)
+    y_new[n] = normal_rng(a + x_new[n] * b, sigma);
 } // The posterior predictive distribution",
 
 "stan_lm.stan")
@@ -51,11 +53,11 @@ stanc("stan_lm.stan") # compile model
 
 # generate data -----------------------------------------------------------
 
-x <- seq(-1,1,length=50)
+x <- as.matrix(seq(-1,1,length=50))
 y <- rnorm(50,10+20*x,5)
 plot(x,y)
 
-stan_data <- list(N = 50, x = x, y = y)
+stan_data <- list(N = 50, K=ncol(x), x = x, y = y, x_new=x, N_new=50)
 
 # run model ---------------------------------------------------------------
 
@@ -75,8 +77,8 @@ for (i in 1:1500) {
 abline(mean(posterior$a),mean(posterior$b))
 
 post <- as.data.frame(fit)
-post %>% select(a, b, sigma) %>% cor() # correlation matrix
-coef_mean <- post %>% select(a, b, sigma) %>% summarise_all(mean) %>% as.numeric # parameter means
+post %>% select(a, 'b[1]', sigma) %>% cor() # correlation matrix
+(coef_mean <- post %>% select(a, 'b[1]', sigma) %>% summarise_all(mean) %>% as.numeric) # parameter means
 
 
 # convergence diagnostics -------------------------------------------------
@@ -89,16 +91,9 @@ stan_dens(fit, pars='a')
 
 # posterior checks --------------------------------------------------------
 
-y_rep <- as.matrix(fit, pars = "y_rep")
+y_rep <- as.matrix(fit, pars = "y_new")
 dim(y_rep)
 library(bayesplot)
 ppc_dens_overlay(y, y_rep[1:200, ]) # comparing density of y with densities of y over 200 posterior draws.
 ppc_stat(y = y, yrep = y_rep, stat = "mean") # compare estimates of summary statistics
 ppc_scatter_avg(y = y, yrep = y_rep) # observed vs predicted with 1:1 line
-
-
-# again with brms ---------------------------------------------------------
-
-library(brms)
-
-fit_brm <- brm(y ~ x)
